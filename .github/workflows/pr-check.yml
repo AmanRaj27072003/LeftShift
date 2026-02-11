@@ -42,9 +42,10 @@ jobs:
       # -----------------------------
       # Layer 1: Hardcoded Secret Detection (Hard Fail)
       # -----------------------------
-      - name: Scan for hardcoded secrets (Layer 1)
+      - name: AI security scan (Layer 1)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: npm run secret-scan
-
 
       # -----------------------------
       # Layer 2: Dependency Vulnerability Signal
