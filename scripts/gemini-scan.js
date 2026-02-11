@@ -4,7 +4,7 @@ const { execSync } = require("child_process");
 const { GoogleGenAI } = require("@google/genai");
 
 const genAI = new GoogleGenAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.0-pro"});
+const model = ai.models.generateContent({ model: "gemini-1.0-pro"});
 
 async function analyze(code, file) {
   const prompt = `
