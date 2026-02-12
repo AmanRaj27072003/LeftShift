@@ -70,3 +70,7 @@ jobs:
           echo "This is a placeholder message."
           echo "In future, this step will be replaced by an AI agent"
           echo "that summarizes vulnerabilities and suggests fixes."
+
+      - name: Authorization Flaw Detection & Refactor (Layer 4)
+        run: |
+          node scripts/ai-auth-fix.js
