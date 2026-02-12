@@ -5,6 +5,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write   # 🔥 THIS FIXES 403
+
 jobs:
   security-pipeline:
     runs-on: ubuntu-latest
@@ -15,6 +18,10 @@ jobs:
       # -----------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.head_ref }}
+
 
       # -----------------------------
       # Step 2: Setup Node.js
@@ -42,9 +49,10 @@ jobs:
       # -----------------------------
       # Layer 1: Hardcoded Secret Detection (Hard Fail)
       # -----------------------------
-      - name: Scan for hardcoded secrets (Layer 1)
+      - name: AI security scan (Layer 1)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: npm run secret-scan
-
 
       # -----------------------------
       # Layer 2: Dependency Vulnerability Signal
@@ -67,3 +75,19 @@ jobs:
           echo "This is a placeholder message."
           echo "In future, this step will be replaced by an AI agent"
           echo "that summarizes vulnerabilities and suggests fixes."
+
+      - name: Authorization Flaw Detection & Refactor (Layer 4)
+        run: |
+          node scripts/ai-auth-fix.js
+
+      - name: Commit AI Changes
+        run: |
+          git config user.name "shift-left-ai"
+          git config user.email "ai-bot@hackathon.com"
+
+          git add index.js
+
+          git diff --cached --quiet || git commit -m "🤖 AI auth refactor applied"
+
+          git push origin HEAD:${{ github.head_ref }}
+
