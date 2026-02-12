@@ -1,151 +1,102 @@
 const fs = require("fs");
+const { execSync } = require("child_process");
 const path = require("path");
-const https = require("https");
-
-const AI_PROVIDER = process.env.AI_PROVIDER || "ollama";
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "llama3";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 const TARGET_EXT = [".js"];
 
-let issueFound = false;
+// ----------------------------
+// 🔥 get ONLY changed files in PR
+// ----------------------------
+function getChangedFiles() {
+  try {
+    const output = execSync(
+      "git diff --name-only origin/${GITHUB_BASE_REF:-main}...HEAD",
+      { encoding: "utf8" }
+    );
 
-function looksLikeAuthRisk(code) {
-  const risky = [
-    /\/admin/i,
-    /delete/i,
-    /update/i,
-    /\/users\/:id/i,
+    return output
+      .split("\n")
+      .filter(f => TARGET_EXT.includes(path.extname(f)));
+  } catch {
+    return ["index.js"]; // fallback
+  }
+}
+
+// ----------------------------
+// 🔥 Detect auth vulnerabilities
+// ----------------------------
+function containsAuthIssue(code) {
+  const patterns = [
+    /SECRET_TOKEN\s*=\s*["']/,
+    /req\.headers\[[^]]*\]/,
+    /if\s*\(\s*token\s*!==/,
+    /exec\(/,
+    /res\.send\(\s*`/,
   ];
 
-  const hasAuth = /(authMiddleware|requireRole|isAdmin|jwt)/i;
-
-  return risky.some(r => r.test(code)) && !hasAuth.test(code);
+  return patterns.some(p => p.test(code));
 }
 
-function callGemini(prompt) {
-  const body = JSON.stringify({
-    contents: [{ parts: [{ text: prompt }] }]
-  });
+// ----------------------------
+// 🔥 Simple local auto-fix (no new files)
+// ----------------------------
+function fixAuthIssues(code) {
+  return code
+    // remove hardcoded secret
+    .replace(
+      /const SECRET_TOKEN\s*=\s*["'][^"']+["']/,
+      'const SECRET_TOKEN = process.env.SECRET_TOKEN'
+    )
 
-  return new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname: "generativelanguage.googleapis.com",
-      path: `/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Content-Length": Buffer.byteLength(body)
-      }
-    }, res => {
-      let data = "";
-      res.on("data", c => data += c);
-      res.on("end", () => {
-        try {
-          const parsed = JSON.parse(data);
-          const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-          resolve(text);
-        } catch (e) {
-          reject(e);
-        }
-      });
-    });
+    // escape XSS
+    .replace(
+      /res\.send\(`([\s\S]*?)\$\{name\}([\s\S]*?)`\)/,
+      'res.json({ message: `Welcome ${name}` })'
+    )
 
-    req.on("error", reject);
-    req.write(body);
-    req.end();
-  });
-}
+    // block command injection
+    .replace(/exec\(/g, "// exec disabled for security\n// exec(")
 
-function callOllama(prompt) {
-  const payload = JSON.stringify({
-    model: OLLAMA_MODEL,
-    prompt,
-    stream: false
-  });
+    // add simple middleware
+    .replace(
+      /const app = express\(\);/,
+      `const app = express();
 
-  return new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname: "host.docker.internal",
-      port: 11434,
-      path: "/api/generate",
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Content-Length": payload.length
-      }
-    }, res => {
-      let data = "";
-      res.on("data", c => data += c);
-      res.on("end", () => {
-        resolve(JSON.parse(data).response);
-      });
-    });
-
-    req.on("error", reject);
-    req.write(payload);
-    req.end();
-  });
-}
-
-async function refactor(code, filePath) {
-  const prompt = `
-You are a security engineer.
-
-Fix authorization vulnerabilities:
-
-Rules:
-- Add authMiddleware to protected routes
-- Add requireRole("admin") for admin routes
-- Prevent IDOR by checking req.user.id === param id
-- Do not change logic
-- Return ONLY updated code
-
-File: ${filePath}
-
-Code:
-${code}
-`;
-
-  if (AI_PROVIDER === "gemini") return await callGemini(prompt);
-  return await callOllama(prompt);
-}
-
-async function processFile(file) {
-  const content = fs.readFileSync(file, "utf8");
-
-  if (!looksLikeAuthRisk(content)) return;
-
-  console.log(`🔒 Authorization risk in ${file}`);
-  issueFound = true;
-
-  const updated = await refactor(content, file);
-
-  if (updated) {
-    fs.writeFileSync(file, updated);
-    console.log(`✅ Secured ${file}`);
+const authMiddleware = (req,res,next)=>{
+  const token = req.headers["x-api-token"];
+  if(token !== process.env.SECRET_TOKEN){
+    return res.status(401).json({error:"Unauthorized"});
   }
+  next();
+};`
+    );
 }
 
-async function scan(dir) {
-  for (const f of fs.readdirSync(dir)) {
-    if (f === "node_modules" || f.startsWith(".")) continue;
-
-    const full = path.join(dir, f);
-
-    if (fs.statSync(full).isDirectory()) await scan(full);
-    else if (TARGET_EXT.includes(path.extname(f))) await processFile(full);
-  }
-}
-
+// ----------------------------
+// 🔥 MAIN
+// ----------------------------
 (async () => {
-  await scan(process.cwd());
+  const files = getChangedFiles();
+  let modified = false;
 
-  if (issueFound) {
-    console.log("🔁 Authorization fixes applied. Re-run pipeline.");
-    process.exit(1);
+  for (const file of files) {
+    const content = fs.readFileSync(file, "utf8");
+
+    if (!containsAuthIssue(content)) continue;
+
+    console.log("🔐 Fixing auth issues in:", file);
+
+    const updated = fixAuthIssues(content);
+
+    fs.writeFileSync(file, updated); // ✅ overwrite same file
+    modified = true;
   }
 
-  console.log("✅ Layer 4 passed: Authorization secure");
+  if (!modified) {
+    console.log("✅ No auth issues found");
+    process.exit(0);
+  }
+
+  console.log("🔁 Files updated. Commit will happen.");
+  process.exit(1);
 })();
