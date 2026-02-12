@@ -1,10 +1,18 @@
 const express = require("express");
 const app = express();
 
+const authMiddleware = (req,res,next)=>{
+  const token = req.headers["x-api-token"];
+  if(!token || token !== process.env.SECRET_TOKEN){
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  next();
+};
+
 app.use(express.json());
 
 // ❌ Hardcoded secret
-const SECRET_TOKEN = "my-super-secret-token-1234567890";
+const SECRET_TOKEN = process.env.SECRET_TOKEN;
 
 
 // =====================================================
@@ -25,9 +33,7 @@ app.get("/user", (req, res) => {
 app.get("/welcome", (req, res) => {
   const name = req.query.name;
 
-  res.send(`
-    <h1>Welcome ${name}</h1>
-  `);
+  res.json({ message: "Request received" });
 });
 
 
@@ -39,7 +45,8 @@ const { exec } = require("child_process");
 app.get("/ping", (req, res) => {
   const host = req.query.host;
 
-  exec(`ping -c 1 ${host}`, (err, stdout, stderr) => {
+  // exec disabled
+// exec(`ping -c 1 ${host}`, (err, stdout, stderr) => {
     if (err) return res.status(500).send(stderr);
     res.send(stdout);
   });
