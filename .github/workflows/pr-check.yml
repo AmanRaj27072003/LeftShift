@@ -85,8 +85,9 @@ jobs:
           git config user.name "shift-left-ai"
           git config user.email "ai-bot@hackathon.com"
 
-          git add -u 
+          git add index.js
 
-          git diff --cached --quiet || git commit -m "🤖 AI auth fixes applied"
+          git diff --cached --quiet || git commit -m "🤖 AI auth refactor applied"
 
           git push origin HEAD:${{ github.head_ref }}
+
